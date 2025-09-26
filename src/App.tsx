@@ -92,9 +92,9 @@ function AppContent() {
             {/* Today's Challenge */}
             <div>
               <h2 className="text-lg font-semibold mb-4 text-blue-900">Today's Challenge</h2>
-              <DailyChallenge 
-                user={user} 
-                accessToken={accessToken} 
+              <DailyChallenge
+                user={user}
+                accessToken={accessToken}
                 onChallengeCompleted={handleChallengeCompleted}
               />
             </div>
@@ -157,7 +157,7 @@ function AppContent() {
               </CardHeader>
               <CardContent>
                 <p className="text-sm text-blue-700">
-                  Consistency is key! Even completing one small challenge daily can lead to 
+                  Consistency is key! Even completing one small challenge daily can lead to
                   significant improvements in your soft skills over time.
                 </p>
               </CardContent>
@@ -200,10 +200,10 @@ function AppContent() {
                 Track your journey and celebrate your achievements
               </p>
             </div>
-            <ProgressTracker 
-              user={user} 
-              accessToken={accessToken} 
-              key={refreshTrigger}
+            <ProgressTracker
+              user={user}
+              accessToken={accessToken}
+              refreshTrigger={refreshTrigger}
             />
           </div>
         );
@@ -233,14 +233,16 @@ function AppContent() {
           {renderContent()}
         </div>
       </div>
-      
+
       <MobileNavigation
         activeTab={activeTab}
         onTabChange={setActiveTab}
         onLogout={handleLogout}
       />
-      
+
       <Toaster />
     </div>
   );
 }
+
+export default AppContent;

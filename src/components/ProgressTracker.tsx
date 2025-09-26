@@ -8,6 +8,7 @@ import { projectId } from '../utils/supabase/info';
 interface ProgressTrackerProps {
   user: any;
   accessToken: string;
+  refreshTrigger: number;
 }
 
 interface UserProgress {
