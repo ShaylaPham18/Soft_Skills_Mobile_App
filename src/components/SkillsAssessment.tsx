@@ -6,7 +6,7 @@ import { Badge } from './ui/badge';
 import { RadioGroup, RadioGroupItem } from './ui/radio-group';
 import { Label } from './ui/label';
 import { Brain, TrendingUp, TrendingDown, BarChart3 } from 'lucide-react';
-import { toast } from 'sonner@2.0.3';
+import { toast } from 'sonner';
 import { projectId } from '../utils/supabase/info';
 
 const ASSESSMENT_QUESTIONS = [
@@ -105,7 +105,55 @@ const ASSESSMENT_QUESTIONS = [
       { value: 4, label: "Well" },
       { value: 5, label: "Very well" }
     ]
-  }
+  },
+  {
+        id: 9,
+        question: "How consistently do you maintain eye contact during conversations?",
+        skill: "Non-Verbal Communication",
+        options: [
+            { value: 1, label: "Rarely maintain eye contact" },
+            { value: 2, label: "Occasionally maintain eye contact" },
+            { value: 3, label: "Sometimes maintain eye contact" },
+            { value: 4, label: "Usually maintain eye contact" },
+            { value: 5, label: "Always maintain eye contact" }
+        ]
+    },
+    {
+        id: 10,
+        question: "How aware are you of your facial expressions when interacting with others?",
+        skill: "Non-Verbal Communication",
+        options: [
+            { value: 1, label: "Not aware at all" },
+            { value: 2, label: "Slightly aware" },
+            { value: 3, label: "Moderately aware" },
+            { value: 4, label: "Very aware" },
+            { value: 5, label: "Extremely aware" }
+        ]
+    },
+    {
+        id: 11,
+        question: "How often do you use gestures or body language to emphasize your points?",
+        skill: "Non-Verbal Communication",
+        options: [
+            { value: 1, label: "Never" },
+            { value: 2, label: "Rarely" },
+            { value: 3, label: "Sometimes" },
+            { value: 4, label: "Often" },
+            { value: 5, label: "Always" }
+        ]
+    },
+    {
+        id: 12,
+        question: "How well do you control your tone of voice to match the situation?",
+        skill: "Non-Verbal Communication",
+        options: [
+            { value: 1, label: "Very poorly" },
+            { value: 2, label: "Poorly" },
+            { value: 3, label: "Adequately" },
+            { value: 4, label: "Well" },
+            { value: 5, label: "Very well" }
+        ]
+    }
 ];
 
 interface SkillsAssessmentProps {

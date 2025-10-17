@@ -1,6 +1,4 @@
 import { useState, useEffect } from 'react';
-import { ThemeProvider } from './components/ThemeProvider';
-import { ThemeToggle } from './components/ThemeToggle';
 import { AuthScreen } from './components/AuthScreen';
 import { DailyChallenge } from './components/DailyChallenge';
 import { SkillsAssessment } from './components/SkillsAssessment';
