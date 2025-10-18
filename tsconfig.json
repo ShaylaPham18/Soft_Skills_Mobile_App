@@ -1,0 +1,23 @@
+{
+  "compilerOptions": {
+    "target": "ESNext",
+    "module": "ESNext",
+    "moduleResolution": "Node",
+    "jsx": "react-jsx",
+    "allowJs": true,
+    "isolatedModules": true,
+    "esModuleInterop": true,
+    "allowSyntheticDefaultImports": true,
+    "skipLibCheck": true,
+    "resolveJsonModule": true,
+    "forceConsistentCasingInFileNames": true,
+    "strict": false,
+    "allowImportingTsExtensions": true,
+    "lib": ["DOM", "ESNext"],
+    "types": ["node"]  },
+  "include": ["src"],
+  "exclude": [
+    "src/supabase/functions"
+  ]
+}
+

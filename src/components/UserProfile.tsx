@@ -7,7 +7,7 @@ import { Switch } from './ui/switch';
 import { Badge } from './ui/badge';
 import { Avatar, AvatarFallback } from './ui/avatar';
 import { User, Settings, Bell, Shield, Award } from 'lucide-react';
-import { toast } from 'sonner@2.0.3';
+import { toast } from 'sonner';
 import { projectId } from '../utils/supabase/info';
 
 interface UserProfileProps {

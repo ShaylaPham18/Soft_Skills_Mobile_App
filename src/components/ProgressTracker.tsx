@@ -26,13 +26,13 @@ interface UserProgress {
   pointsToNextLevel: number;
 }
 
-export function ProgressTracker({ user, accessToken }: ProgressTrackerProps) {
+export function ProgressTracker({ user, accessToken, refreshTrigger }: ProgressTrackerProps) {
   const [progress, setProgress] = useState<UserProgress | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     loadProgress();
-  }, [user]);
+  }, [user, refreshTrigger]);
 
   const loadProgress = async () => {
     try {
