@@ -54,14 +54,14 @@
       "devDependencies": {
             "@types/node": "^20.19.22",
             "@vitejs/plugin-react-swc": "^3.10.2",
+            "tsx": "^4.20.6",
             "vite": "6.3.5"
       },
       "scripts": {
             "dev": "vite",
             "build": "vite build",
-            "backend": "tsx index.ts",
+            "backend": "tsx index.tsx",
             "start:all": "concurrently \"npm run backend\" \"npm run dev\"",
             "server": "tsx src/supabase/functions/server/index.tsx"
-
       }
 }

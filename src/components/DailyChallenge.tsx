@@ -1,9 +1,8 @@
 import { useState, useEffect } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from './ui/card';
 import { Badge } from './ui/badge';
-import { Clock, Star } from 'lucide-react';
+import { Clock, Star, CheckCircle, SkipForward } from 'lucide-react';
 import { Button } from './ui/button';
-import { CheckCircle, SkipForward } from 'lucide-react';
 import { toast } from 'sonner';
 import { projectId } from '../utils/supabase/info';
 
@@ -16,6 +15,7 @@ interface Challenge {
     points: number;
     skill: string;
     created_at: string;
+    completed?: boolean;
 }
 
 interface DailyChallengeProps {
@@ -24,84 +24,68 @@ interface DailyChallengeProps {
     onChallengeCompleted: () => void;
 }
 
-export function DailyChallenge({ user, accessToken, onChallengeCompleted }: DailyChallengeProps) {
+export function DailyChallenge({
+                                   user,
+                                   accessToken,
+                                   onChallengeCompleted,
+                               }: DailyChallengeProps) {
     const [todaysChallenge, setTodaysChallenge] = useState<Challenge | null>(null);
     const [loading, setLoading] = useState(true);
     const [skipsUsed, setSkipsUsed] = useState(0);
     const [skipsRemaining, setSkipsRemaining] = useState(2);
     const [assessmentResults, setAssessmentResults] = useState<any[]>([]);
 
-    const baseUrl = process.env.NODE_ENV === 'development'
-        ? 'http://localhost:3001'
-        : `https://${projectId}.supabase.co/functions/v1`;
+    // Challenge backend: Node server in dev, Supabase function in prod
+    const baseUrl =
+        process.env.NODE_ENV === 'development'
+            ? 'http://localhost:3001'
+            : `https://${projectId}.supabase.co/functions/v1`;
 
-    const loadAssessmentResults = async () => {
+    // Assessment always lives in Supabase functions
+    const assessmentBaseUrl = `https://${projectId}.supabase.co/functions/v1`;
+
+    // ✅ Check if user has taken the skills assessment
+    const loadAssessmentResults = async (): Promise<boolean> => {
         try {
-            if (!accessToken) return;
-            const res = await fetch(`${baseUrl}/make-server-93cd01be/assessment/${user.id}`, {
-                headers: { Authorization: `Bearer ${accessToken}` },
-            });
-            const result = await res.json();
-            setAssessmentResults(result.assessment?.results || []);
-        } catch (err) {
-            console.error('Error loading assessment results:', err);
-        }
-    };
+            if (!accessToken || !user?.id) return false;
 
-    const loadOrGenerateChallenge = async () => {
-        try {
-            if (!accessToken) {
-                console.warn('Missing accessToken in DailyChallenge');
-                toast.error('Session missing. Please sign in again.');
-                setLoading(false);
-                return;
-            }
+            const res = await fetch(
+                `${assessmentBaseUrl}/make-server-93cd01be/assessment/${user.id}`,
+                {
+                    headers: { Authorization: `Bearer ${accessToken}` },
+                }
+            );
 
-            const res = await fetch(`${baseUrl}/make-server-93cd01be/daily-challenge/${user.id}`, {
-                headers: { Authorization: `Bearer ${accessToken}` },
-            });
-
-            const text = await res.text();
-            let result: any = {};
-            try {
-                result = text ? JSON.parse(text) : {};
-            } catch (e) {
-                console.error('Failed to parse server response as JSON:', text);
-                toast.error('Unexpected server response');
-                setLoading(false);
-                return;
-            }
+            console.log('DailyChallenge assessment status:', res.status);
 
             if (!res.ok) {
-                console.error('daily-challenge failed:', res.status, result);
-                toast.error(result?.error || 'Failed to load challenge');
-                setLoading(false);
-                return;
+                // 404 or similar = no assessment yet
+                setAssessmentResults([]);
+                return false;
             }
 
-            if (result.challenge) {
-                setTodaysChallenge(result.challenge);
-                setSkipsUsed(result.skipsUsed || 0);
-                setSkipsRemaining(result.skipsRemaining ?? 2);
-            } else {
-                await loadAssessmentResults();
-                const newChallenge = await generateChallengeFromAssessment();
-                if (newChallenge) setTodaysChallenge(newChallenge);
-            }
+            const result = await res.json();
+            console.log('DailyChallenge assessment result:', result);
+
+            // Match SkillsAssessment: result.assessment.results
+            const results = result.assessment?.results ?? [];
+
+            setAssessmentResults(results);
+            return results.length > 0;
         } catch (err) {
-            console.error('Error loading or generating challenge:', err);
-            toast.error('Failed to load challenge');
-        } finally {
-            setLoading(false);
+            console.error('Error loading assessment results in DailyChallenge:', err);
+            setAssessmentResults([]);
+            return false;
         }
     };
 
-    const generateChallengeFromAssessment = async () => {
+    const generateChallengeFromAssessment = async (): Promise<Challenge | null> => {
         try {
             if (!accessToken) {
                 toast.error('Session missing. Please sign in again.');
                 return null;
             }
+
             const res = await fetch(`${baseUrl}/make-server-93cd01be/generate-challenge`, {
                 method: 'POST',
                 headers: {
@@ -135,11 +119,80 @@ export function DailyChallenge({ user, accessToken, onChallengeCompleted }: Dail
         }
     };
 
+    const loadOrGenerateChallenge = async () => {
+        try {
+            if (!accessToken) {
+                console.warn('Missing accessToken in DailyChallenge');
+                toast.error('Session missing. Please sign in again.');
+                setLoading(false);
+                return;
+            }
+
+            // 1️⃣ Check assessment first
+            const hasAssessment = await loadAssessmentResults();
+            if (!hasAssessment) {
+                // Block challenges until assessment is done
+                setTodaysChallenge(null);
+                setLoading(false);
+                return;
+            }
+
+            // 2️⃣ Load or create today's challenge
+            const res = await fetch(
+                `${baseUrl}/make-server-93cd01be/daily-challenge/${user.id}`,
+                {
+                    headers: { Authorization: `Bearer ${accessToken}` },
+                }
+            );
+
+            const text = await res.text();
+            let result: any = {};
+            try {
+                result = text ? JSON.parse(text) : {};
+            } catch (e) {
+                console.error('Failed to parse server response as JSON:', text);
+                toast.error('Unexpected server response');
+                setLoading(false);
+                return;
+            }
+
+            if (!res.ok) {
+                console.error('daily-challenge failed:', res.status, result);
+                toast.error(result?.error || 'Failed to load challenge');
+                setLoading(false);
+                return;
+            }
+
+            if (result.challenge) {
+                setTodaysChallenge({
+                    ...result.challenge,
+                    completed: result.completed ?? result.challenge.completed ?? false,
+                });
+                setSkipsUsed(result.skipsUsed || 0);
+                setSkipsRemaining(result.skipsRemaining ?? 2);
+            } else {
+                const newChallenge = await generateChallengeFromAssessment();
+                if (newChallenge) {
+                    setTodaysChallenge({
+                        ...newChallenge,
+                        completed: false,
+                    });
+                }
+            }
+        } catch (err) {
+            console.error('Error loading or generating challenge:', err);
+            toast.error('Failed to load challenge');
+        } finally {
+            setLoading(false);
+        }
+    };
+
     const handleSkipChallenge = async () => {
         if (skipsRemaining <= 0) {
             toast.error('No skips remaining for today.');
             return;
         }
+
         try {
             const res = await fetch(`${baseUrl}/make-server-93cd01be/skip-challenge`, {
                 method: 'POST',
@@ -155,7 +208,7 @@ export function DailyChallenge({ user, accessToken, onChallengeCompleted }: Dail
                 toast.success('Challenge skipped! Generating a new one...');
                 setSkipsUsed(result.skipsUsed);
                 setSkipsRemaining(result.skipsRemaining);
-                await loadOrGenerateChallenge(); // reload a new challenge
+                await loadOrGenerateChallenge();
             } else {
                 toast.error(result.error || 'Failed to skip challenge');
             }
@@ -166,6 +219,8 @@ export function DailyChallenge({ user, accessToken, onChallengeCompleted }: Dail
     };
 
     const handleCompleteChallenge = async () => {
+        if (!todaysChallenge) return;
+
         try {
             const res = await fetch(`${baseUrl}/make-server-93cd01be/complete-challenge`, {
                 method: 'POST',
@@ -175,16 +230,18 @@ export function DailyChallenge({ user, accessToken, onChallengeCompleted }: Dail
                 },
                 body: JSON.stringify({
                     userId: user.id,
-                    challengeId: todaysChallenge?.id,
-                    points: todaysChallenge?.points || 10,
+                    challengeId: todaysChallenge.id,
+                    points: todaysChallenge.points || 10,
                 }),
             });
 
             const result = await res.json();
             if (res.ok) {
                 toast.success('Challenge completed!');
-                setTodaysChallenge({ ...todaysChallenge, completed: true }); // mark done
-                onChallengeCompleted(); // <-- This tells the parent (Dashboard) to refresh ProgressTracker
+                setTodaysChallenge((prev) =>
+                    prev ? { ...prev, completed: true } : prev
+                );
+                onChallengeCompleted();
             } else {
                 toast.error(result.error || 'Failed to complete challenge');
             }
@@ -196,11 +253,13 @@ export function DailyChallenge({ user, accessToken, onChallengeCompleted }: Dail
 
     useEffect(() => {
         if (user && accessToken) {
+            setLoading(true);
             loadOrGenerateChallenge();
         } else {
             setLoading(false);
         }
-    }, [user, accessToken]);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [user?.id, accessToken]);
 
     if (loading) {
         return (
@@ -215,6 +274,26 @@ export function DailyChallenge({ user, accessToken, onChallengeCompleted }: Dail
         );
     }
 
+    // ⛔ No assessment yet → show gate
+    if (!todaysChallenge && assessmentResults.length === 0) {
+        return (
+            <Card className="border-blue-200">
+                <CardContent className="p-6 text-center text-blue-700">
+                    <h2 className="text-xl font-bold mb-2">Assessment Required</h2>
+                    <p className="mb-4">
+                        Before you can receive daily challenges, please complete your Skills
+                        Assessment first.
+                    </p>
+                    <p className="text-sm text-blue-600">
+                        Go to the <strong>Skills Assessment</strong> section in the app to get
+                        started.
+                    </p>
+                </CardContent>
+            </Card>
+        );
+    }
+
+    // Assessment exists but no challenge for some reason
     if (!todaysChallenge) {
         return (
             <Card className="border-blue-200">
@@ -236,50 +315,40 @@ export function DailyChallenge({ user, accessToken, onChallengeCompleted }: Dail
             </CardHeader>
 
             <CardContent>
-                <h3 className="font-medium text-blue-900">{todaysChallenge.title}</h3>
-                <p className="text-blue-700 mb-6">{todaysChallenge.description}</p><br></br>
+                <h3 className="font-medium text-blue-900 mb-3">{todaysChallenge.title}</h3>
+                <div className="text-sm text-blue-600 mb-2">
+                    Focus Skill: <span className="font-semibold">{todaysChallenge.skill}</span>
+                </div>
+                <p className="text-blue-700 mb-6">{todaysChallenge.description}</p>
+                <br />
 
-                {/* ✅ If challenge completed */}
                 {todaysChallenge.completed ? (
                     <div className="flex items-center justify-center gap-2 text-green-700 font-medium">
                         <CheckCircle className="h-5 w-5 text-green-600" />
                         Challenge completed! 🎉
                     </div>
                 ) : (
-                    <>
-                        {/* ✅ Skip + Complete Buttons */}
-                        <div className="flex justify-between items-center mt-6">
-                            <div className="text-sm text-blue-700">
-                                Skips Remaining: {skipsRemaining}
-                            </div>
-
-                            <div className="flex gap-3">
-                                <Button
-                                    variant="outline"
-                                    disabled={skipsRemaining === 0}
-                                    onClick={handleSkipChallenge}
-                                >
-                                    <SkipForward className="h-4 w-4 mr-1" /> Skip
-                                </Button>
-
-                                <Button
-                                    onClick={async () => {
-                                        await handleCompleteChallenge();
-                                        // ✅ Update local state to mark as completed
-                                        setTodaysChallenge({
-                                            ...todaysChallenge,
-                                            completed: true,
-                                        });
-                                    }}
-                                >
-                                    <CheckCircle className="h-4 w-4 mr-1" /> Complete
-                                </Button>
-                            </div>
+                    <div className="flex justify-between items-center mt-6">
+                        <div className="text-sm text-blue-700">
+                            Skips Remaining: {skipsRemaining}
                         </div>
-                    </>
+
+                        <div className="flex gap-3">
+                            <Button
+                                variant="outline"
+                                disabled={skipsRemaining === 0}
+                                onClick={handleSkipChallenge}
+                            >
+                                <SkipForward className="h-4 w-4 mr-1" /> Skip
+                            </Button>
+
+                            <Button onClick={handleCompleteChallenge}>
+                                <CheckCircle className="h-4 w-4 mr-1" /> Complete
+                            </Button>
+                        </div>
+                    </div>
                 )}
             </CardContent>
         </Card>
     );
-
 }
