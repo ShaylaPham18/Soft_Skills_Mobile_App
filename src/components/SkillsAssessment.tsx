@@ -15,8 +15,13 @@ import { Brain, TrendingUp, TrendingDown, BarChart3 } from 'lucide-react';
 import { toast } from 'sonner';
 import { projectId } from '../utils/supabase/info';
 
+const assessmentBaseUrl =
+    process.env.NODE_ENV === 'development'
+        ? 'http://localhost:3001'
+        : `https://${projectId}.supabase.co/functions/v1`;
+
 const ASSESSMENT_QUESTIONS = [
-    // … your same 12 questions exactly …
+    // (your same 12 questions – unchanged)
     {
         id: 1,
         question: 'How comfortable are you with public speaking?',
@@ -179,42 +184,47 @@ export function SkillsAssessment({ user, accessToken }: SkillsAssessmentProps) {
     const [hasExistingAssessment, setHasExistingAssessment] = useState(false);
     const [loading, setLoading] = useState(false);
 
-    // 🔍 Check if the user already has an assessment saved
+    // 🔍 Check for existing saved assessment
     useEffect(() => {
         if (user?.id && accessToken) {
             checkExistingAssessment();
         }
-        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [user?.id, accessToken]);
 
+    // 🔍 Load existing assessment from backend
     const checkExistingAssessment = async () => {
         try {
-            console.log('Checking existing assessment for user:', user.id);
-
             const response = await fetch(
-                `https://${projectId}.supabase.co/functions/v1/make-server-93cd01be/assessment/${user.id}`,
+                `${assessmentBaseUrl}/make-server-93cd01be/assessment/${user.id}`,
                 {
-                    headers: {
-                        Authorization: `Bearer ${accessToken}`,
-                    },
+                    headers: { Authorization: `Bearer ${accessToken}` },
                 }
             );
 
-            console.log('Assessment check response status:', response.status);
+            if (!response.ok) return;
 
-            if (response.ok) {
-                const result = await response.json();
-                console.log('Assessment check result:', result);
+            const result = await response.json();
+            const assessment = result.assessment;
+            if (!assessment?.scores) return;
 
-                if (result.assessment && result.assessment.results) {
-                    setResults(result.assessment.results);
-                    setIsComplete(true);
-                    setHasExistingAssessment(true);
-                }
-            } else {
-                const errorText = await response.text();
-                console.log('Assessment check error response:', errorText);
-            }
+            const scoresObj = assessment.scores as Record<string, number>;
+
+            const loadedResults = Object.entries(scoresObj).map(
+                ([skill, score]) => ({
+                    skill,
+                    score,
+                    level:
+                        score >= 80
+                            ? 'Strong'
+                            : score >= 60
+                                ? 'Average'
+                                : 'Needs Improvement',
+                })
+            );
+
+            setResults(loadedResults);
+            setIsComplete(true);
+            setHasExistingAssessment(true);
         } catch (error) {
             console.error('Error checking existing assessment:', error);
         }
@@ -236,15 +246,14 @@ export function SkillsAssessment({ user, accessToken }: SkillsAssessmentProps) {
     };
 
     const previousQuestion = () => {
-        if (currentQuestion > 0) {
-            setCurrentQuestion(currentQuestion - 1);
-        }
+        if (currentQuestion > 0) setCurrentQuestion(currentQuestion - 1);
     };
 
+    // 🔥 Save assessment to backend
     const completeAssessment = async () => {
         setLoading(true);
 
-        // Calculate skill scores
+        // 1️⃣ Aggregate scores
         const skillScores: Record<string, { total: number; count: number }> = {};
 
         ASSESSMENT_QUESTIONS.forEach((question) => {
@@ -258,56 +267,51 @@ export function SkillsAssessment({ user, accessToken }: SkillsAssessmentProps) {
             }
         });
 
-        const calculatedResults = Object.entries(skillScores).map(([skill, data]) => {
-            const avg = data.total / data.count;
+        const calculatedResults = Object.entries(skillScores).map(([skill, d]) => {
+            const avg = d.total / d.count;
+            const score = Math.round(avg * 20);
             return {
                 skill,
-                score: Math.round(avg * 20), // 1–5 → 20–100
+                score,
                 level:
                     avg >= 4 ? 'Strong' : avg >= 3 ? 'Average' : 'Needs Improvement',
             };
         });
 
-        console.log('Calculated assessment results:', calculatedResults);
+        // 2️⃣ Format scores for backend
+        const scoresForBackend: Record<string, number> = {};
+        calculatedResults.forEach((r) => {
+            scoresForBackend[r.skill] = r.score;
+        });
 
         try {
-            const requestBody = {
-                userId: user.id,
-                results: calculatedResults,
-                answers,
-            };
-
-            console.log('Sending assessment data:', requestBody);
-
             const response = await fetch(
-                `https://${projectId}.supabase.co/functions/v1/make-server-93cd01be/save-assessment`,
+                `${assessmentBaseUrl}/make-server-93cd01be/assessment/${user.id}`,
                 {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
                         Authorization: `Bearer ${accessToken}`,
                     },
-                    body: JSON.stringify(requestBody),
+                    body: JSON.stringify(scoresForBackend),
                 }
             );
 
-            console.log('Save assessment response status:', response.status);
+            const text = await response.text();
+            let data = null;
+            try { data = text ? JSON.parse(text) : null; } catch {}
 
             if (response.ok) {
-                const result = await response.json();
-                console.log('Save assessment result:', result);
                 setResults(calculatedResults);
                 setIsComplete(true);
                 setHasExistingAssessment(true);
-                toast.success('Assessment completed! Your daily challenges will now match your skills.');
+                toast.success('Assessment completed!');
             } else {
-                const errorText = await response.text();
-                console.error('Save assessment error response:', errorText);
-                throw new Error(`Failed to save assessment: ${errorText}`);
+                toast.error(data?.error || data?.details || text);
             }
         } catch (error) {
             console.error('Error saving assessment:', error);
-            toast.error('Failed to save assessment. Please try again.');
+            toast.error('Failed to save assessment.');
         } finally {
             setLoading(false);
         }
@@ -321,11 +325,10 @@ export function SkillsAssessment({ user, accessToken }: SkillsAssessmentProps) {
         setHasExistingAssessment(false);
     };
 
+    // 🎉 Results screen
     if (isComplete && results) {
         const strongSkills = results.filter((r: any) => r.level === 'Strong');
-        const weakSkills = results.filter(
-            (r: any) => r.level === 'Needs Improvement'
-        );
+        const weakSkills = results.filter((r: any) => r.level === 'Needs Improvement');
 
         return (
             <div className="space-y-6">
@@ -336,7 +339,7 @@ export function SkillsAssessment({ user, accessToken }: SkillsAssessmentProps) {
                             Your Skills Assessment Results
                         </CardTitle>
                         <CardDescription className="text-blue-700 dark:text-blue-300">
-                            Based on your responses, here&apos;s your current skill profile
+                            Based on your responses, here’s your skill profile
                         </CardDescription>
                     </CardHeader>
                     <CardContent className="space-y-6">
@@ -366,11 +369,7 @@ export function SkillsAssessment({ user, accessToken }: SkillsAssessmentProps) {
                         </div>
 
                         {hasExistingAssessment && (
-                            <Button
-                                onClick={retakeAssessment}
-                                variant="outline"
-                                className="w-full"
-                            >
+                            <Button onClick={retakeAssessment} variant="outline" className="w-full">
                                 Retake Assessment
                             </Button>
                         )}
@@ -388,10 +387,7 @@ export function SkillsAssessment({ user, accessToken }: SkillsAssessmentProps) {
                         <CardContent>
                             <div className="flex flex-wrap gap-2">
                                 {strongSkills.map((skill: any, index: number) => (
-                                    <Badge
-                                        key={index}
-                                        className="bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200"
-                                    >
+                                    <Badge key={index} className="bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200">
                                         {skill.skill}
                                     </Badge>
                                 ))}
@@ -411,17 +407,13 @@ export function SkillsAssessment({ user, accessToken }: SkillsAssessmentProps) {
                         <CardContent>
                             <div className="flex flex-wrap gap-2">
                                 {weakSkills.map((skill: any, index: number) => (
-                                    <Badge
-                                        key={index}
-                                        className="bg-blue-50 text-blue-700 border-blue-200 dark:bg-blue-900/50 dark:text-blue-300 dark:border-blue-700"
-                                    >
+                                    <Badge key={index} className="bg-blue-50 text-blue-700 border-blue-200 dark:bg-blue-900/50 dark:text-blue-300 dark:border-blue-700">
                                         {skill.skill}
                                     </Badge>
                                 ))}
                             </div>
                             <p className="text-sm text-muted-foreground mt-3">
-                                Focus on daily challenges that target these areas for the best
-                                improvement.
+                                Daily challenges will now focus on strengthening these areas.
                             </p>
                         </CardContent>
                     </Card>
@@ -430,9 +422,9 @@ export function SkillsAssessment({ user, accessToken }: SkillsAssessmentProps) {
         );
     }
 
+    // 📝 Assessment Question screen
     const currentQ = ASSESSMENT_QUESTIONS[currentQuestion];
-    const progress =
-        ((currentQuestion + 1) / ASSESSMENT_QUESTIONS.length) * 100;
+    const progress = ((currentQuestion + 1) / ASSESSMENT_QUESTIONS.length) * 100;
 
     return (
         <Card className="border-blue-200 dark:border-blue-800">
@@ -446,14 +438,15 @@ export function SkillsAssessment({ user, accessToken }: SkillsAssessmentProps) {
                 </CardDescription>
                 <div className="space-y-2">
                     <div className="flex justify-between text-sm">
-            <span>
-              Question {currentQuestion + 1} of {ASSESSMENT_QUESTIONS.length}
-            </span>
+                        <span>
+                            Question {currentQuestion + 1} of {ASSESSMENT_QUESTIONS.length}
+                        </span>
                         <span>{Math.round(progress)}% Complete</span>
                     </div>
                     <Progress value={progress} />
                 </div>
             </CardHeader>
+
             <CardContent className="space-y-6">
                 <div>
                     <Badge className="mb-3 bg-blue-100 text-blue-800 hover:bg-blue-200 dark:bg-blue-900 dark:text-blue-200">
@@ -472,17 +465,13 @@ export function SkillsAssessment({ user, accessToken }: SkillsAssessmentProps) {
 
                             return (
                                 <div key={option.value} className="flex items-center space-x-2">
-                                    <RadioGroupItem
-                                        value={option.value.toString()}
-                                        id={optionId}
-                                    />
+                                    <RadioGroupItem value={option.value.toString()} id={optionId} />
                                     <Label htmlFor={optionId} className="cursor-pointer">
                                         {option.label}
                                     </Label>
                                 </div>
                             );
                         })}
-
                     </RadioGroup>
                 </div>
 

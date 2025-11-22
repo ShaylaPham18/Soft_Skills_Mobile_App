@@ -42,9 +42,11 @@ export function DailyChallenge({
             : `https://${projectId}.supabase.co/functions/v1`;
 
     // Assessment always lives in Supabase functions
-    const assessmentBaseUrl = `https://${projectId}.supabase.co/functions/v1`;
+    const assessmentBaseUrl =
+        process.env.NODE_ENV === 'development'
+            ? 'http://localhost:3001'
+            : `https://${projectId}.supabase.co/functions/v1`;
 
-    // ✅ Check if user has taken the skills assessment
     const loadAssessmentResults = async (): Promise<boolean> => {
         try {
             if (!accessToken || !user?.id) return false;
@@ -65,10 +67,31 @@ export function DailyChallenge({
             }
 
             const result = await res.json();
-            console.log('DailyChallenge assessment result:', result);
+            console.log('DailyChallenge raw assessment:', result);
 
-            // Match SkillsAssessment: result.assessment.results
-            const results = result.assessment?.results ?? [];
+            const assessment = result.assessment;
+            if (!assessment || !assessment.scores) {
+                setAssessmentResults([]);
+                return false;
+            }
+
+            const scoresObj = assessment.scores as Record<string, number>;
+
+            function getLevelForScore(score: number): string {
+                if (score < 50) return 'Needs Improvement';
+                if (score < 75) return 'Average';
+                return 'Strong';
+            }
+
+            const results: AssessmentResult[] = Object.entries(scoresObj).map(
+                ([skill, score]) => ({
+                    skill,
+                    score: Number(score),
+                    level: getLevelForScore(Number(score)), // 👈 now labels match UI
+                })
+            );
+
+            console.log('DailyChallenge normalized assessment results:', results);
 
             setAssessmentResults(results);
             return results.length > 0;
@@ -79,45 +102,20 @@ export function DailyChallenge({
         }
     };
 
-    const generateChallengeFromAssessment = async (): Promise<Challenge | null> => {
-        try {
-            if (!accessToken) {
-                toast.error('Session missing. Please sign in again.');
-                return null;
-            }
-
-            const res = await fetch(`${baseUrl}/make-server-93cd01be/generate-challenge`, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    Authorization: `Bearer ${accessToken}`,
-                },
-                body: JSON.stringify({ userId: user.id, assessmentResults }),
-            });
-
-            const text = await res.text();
-            let data: any = {};
-            try {
-                data = text ? JSON.parse(text) : {};
-            } catch (e) {
-                console.error('Non-JSON response from generate-challenge:', text);
-                toast.error('Server error when generating challenge');
-                return null;
-            }
-
-            if (!res.ok) {
-                console.error('generate-challenge failed:', res.status, data);
-                toast.error(data?.error || 'Failed to generate challenge');
-                return null;
-            }
-
-            return data.challenge || null;
-        } catch (error) {
-            console.error('Error generating challenge:', error);
-            toast.error('Unable to generate a new challenge.');
-            return null;
-        }
+    type AssessmentResult = {
+        skill: string;
+        score: number;
+        level: string;
     };
+
+    function getWeakestSkill(results: AssessmentResult[]) {
+        if (!results || results.length === 0) return null;
+
+        // Always pick the lowest score
+        return results.reduce((min, curr) =>
+            curr.score < min.score ? curr : min
+        );
+    }
 
     const loadOrGenerateChallenge = async () => {
         try {
@@ -171,13 +169,9 @@ export function DailyChallenge({
                 setSkipsUsed(result.skipsUsed || 0);
                 setSkipsRemaining(result.skipsRemaining ?? 2);
             } else {
-                const newChallenge = await generateChallengeFromAssessment();
-                if (newChallenge) {
-                    setTodaysChallenge({
-                        ...newChallenge,
-                        completed: false,
-                    });
-                }
+                // backend should normally always send a challenge,
+                // but just in case:
+                setTodaysChallenge(null);
             }
         } catch (err) {
             console.error('Error loading or generating challenge:', err);
@@ -274,7 +268,7 @@ export function DailyChallenge({
         );
     }
 
-    // ⛔ No assessment yet → show gate
+    // No assessment yet
     if (!todaysChallenge && assessmentResults.length === 0) {
         return (
             <Card className="border-blue-200">

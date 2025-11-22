@@ -36,9 +36,7 @@ if (
     throw new Error('Missing Supabase environment variables.');
 }
 
-/* ------------------------------------------------------------------ */
-/* Helpers                                                            */
-/* ------------------------------------------------------------------ */
+// ─────────────────────── helpers ───────────────────────
 
 function toDateString(value: any): string {
     if (!value) return '';
@@ -46,32 +44,50 @@ function toDateString(value: any): string {
     return new Date(value).toISOString().slice(0, 10);
 }
 
-// results is an array like [{ skill: 'Communication', score: 60, level: 'Average' }, ...]
-function getWeakestSkills(results: any[]): string[] {
-    if (!Array.isArray(results) || results.length === 0) return [];
+/**
+ * Given an assessment row, figure out the weakest skills.
+ * 1) Prefer the `weakest_skill` column if present.
+ * 2) Otherwise fall back to the lowest value(s) in `scores`.
+ */
+function extractWeakestSkills(assessment: any): string[] {
+    if (!assessment) return [];
 
-    // Only consider entries that actually have a numeric score
-    const numericResults = results.filter(
-        (r) => typeof r.score === 'number' && !Number.isNaN(r.score)
-    );
-    if (numericResults.length === 0) return [];
+    // 1) Use stored weakest_skill if present
+    if (assessment.weakest_skill) {
+        const wk = String(assessment.weakest_skill).trim();
+        if (wk.length > 0) {
+            console.log('🔥 Using weakest_skill column:', wk);
+            return [wk];
+        }
+    }
 
-    const minScore = Math.min(...numericResults.map((r) => r.score as number));
+    // 2) Fallback: compute from scores JSON
+    const scores = assessment.scores as Record<string, number> | undefined;
+    if (!scores || typeof scores !== 'object') return [];
 
-    const weakestSkills = numericResults
-        .filter((r) => r.score === minScore)
-        .map((r) => String(r.skill || '').trim())
+    const entries = Object.entries(scores)
+        .map(([skill, score]) => [skill, Number(score)] as [string, number])
+        .filter(([, n]) => !Number.isNaN(n));
+
+    if (entries.length === 0) return [];
+
+    let min = entries[0][1];
+    for (const [, n] of entries) {
+        if (n < min) min = n;
+    }
+
+    const weakest = entries
+        .filter(([, n]) => n === min)
+        .map(([skill]) => skill.trim())
         .filter((s) => s.length > 0);
 
-    console.log('🔥 Weakest skills detected from assessment:', weakestSkills);
-    return weakestSkills;
+    console.log('🔥 Computed weakest skills from scores:', weakest);
+    return weakest;
 }
 
-/* ------------------------------------------------------------------ */
-/* ✅ Assessment routes (match SkillsAssessment + DailyChallenge)      */
-/* ------------------------------------------------------------------ */
+// ─────────────────────── assessment routes ───────────────────────
 
-// GET latest assessment
+// GET latest assessment for a user
 app.get('/make-server-93cd01be/assessment/:userId', async (c) => {
     try {
         const userId = c.req.param('userId');
@@ -101,35 +117,83 @@ app.get('/make-server-93cd01be/assessment/:userId', async (c) => {
     }
 });
 
-// SAVE assessment
-app.post('/make-server-93cd01be/save-assessment', async (c) => {
+// POST save assessment scores
+app.post('/make-server-93cd01be/assessment/:userId', async (c) => {
     try {
-        const { userId, results, answers } = await c.req.json();
+        const userId = c.req.param('userId');
+        const body = await c.req.json();
 
-        if (!userId || !Array.isArray(results)) {
-            return c.json({ error: 'Missing userId or results' }, 400);
+        console.log('Incoming assessment POST:', { userId, body });
+
+        if (!userId) {
+            return c.json({ error: 'Missing userId in URL' }, 400);
         }
 
-        // if user_assessments.user_id is NOT unique, this will just insert new rows,
-        // which is fine because we always order by created_at when reading.
-        const { error } = await supabaseAdmin.from('user_assessments').upsert({
-            user_id: userId,
-            results,
-            answers: answers || {},
-            created_at: new Date().toISOString(),
-        });
+        if (!body || typeof body !== 'object' || Array.isArray(body)) {
+            return c.json(
+                { error: 'Body must be a JSON object of skill scores' },
+                400
+            );
+        }
+
+        // Normalize all scores to numbers
+        const scores: Record<string, number> = {};
+        for (const [skill, value] of Object.entries(body)) {
+            const num = Number(value);
+            if (Number.isNaN(num)) {
+                return c.json(
+                    { error: `Score for skill "${skill}" is not a valid number` },
+                    400
+                );
+            }
+            scores[skill] = num;
+        }
+
+        const skillKeys = Object.keys(scores);
+        if (skillKeys.length === 0) {
+            return c.json({ error: 'No scores provided' }, 400);
+        }
+
+        // Compute weakest skill for convenience column
+        const weakestSkill = skillKeys.reduce((curr, key) =>
+            scores[key] < scores[curr] ? key : curr
+        );
+
+        console.log('Computed weakestSkill:', weakestSkill, 'scores:', scores);
+
+        const { data, error } = await supabaseAdmin
+            .from('user_assessments')
+            .insert({
+                user_id: userId,
+                scores,
+                weakest_skill: weakestSkill,
+            })
+            .select()
+            .single();
 
         if (error) {
-            console.error('Error saving assessment:', error);
-            return c.json({ error: 'Failed to save assessment' }, 500);
+            console.error('Error saving assessment to user_assessments:', error);
+            return c.json(
+                {
+                    error: 'Failed to save assessment',
+                    details: error.message ?? error,
+                },
+                500
+            );
         }
 
-        return c.json({ success: true });
-    } catch (err) {
-        console.error('Error in /save-assessment:', err);
-        return c.json({ error: 'Failed to save assessment' }, 500);
+        console.log('Saved assessment row:', data);
+        return c.json({ assessment: data }, 200);
+    } catch (err: any) {
+        console.error('Unexpected error in POST /assessment:', err);
+        return c.json(
+            { error: 'Unexpected error saving assessment', details: String(err) },
+            500
+        );
     }
 });
+
+// ─────────────────────── daily challenge ───────────────────────
 
 app.get('/make-server-93cd01be/daily-challenge/:userId', async (c) => {
     try {
@@ -144,7 +208,7 @@ app.get('/make-server-93cd01be/daily-challenge/:userId', async (c) => {
         const userId = userData.user.id;
         const today = new Date().toISOString().slice(0, 10);
 
-        // 1) Already have today's challenge? Just return it.
+        // 1) If there's already a challenge for today, return it
         const { data: storedChallenge } = await supabaseAdmin
             .from('user_challenges')
             .select('*')
@@ -165,21 +229,25 @@ app.get('/make-server-93cd01be/daily-challenge/:userId', async (c) => {
             });
         }
 
-        // 2) No stored challenge → use assessment to pick one
+        // 2) Load latest assessment to figure out weakest skill(s)
         let weakestSkills: string[] = [];
         try {
-            const { data: assessment } = await supabaseAdmin
+            const { data: assessment, error: assessmentErr } = await supabaseAdmin
                 .from('user_assessments')
-                .select('results')
+                .select('scores, weakest_skill')
                 .eq('user_id', userId)
                 .order('created_at', { ascending: false })
                 .limit(1)
                 .maybeSingle();
 
-            console.log('🧪 Assessment loaded for daily-challenge:', assessment);
-
-            if (assessment?.results) {
-                weakestSkills = getWeakestSkills(assessment.results as any[]);
+            if (assessmentErr) {
+                console.warn(
+                    '⚠️ Error loading assessment for daily-challenge:',
+                    assessmentErr
+                );
+            } else {
+                console.log('🧪 Assessment loaded for daily-challenge:', assessment);
+                weakestSkills = extractWeakestSkills(assessment);
             }
         } catch (e) {
             console.warn(
@@ -188,7 +256,7 @@ app.get('/make-server-93cd01be/daily-challenge/:userId', async (c) => {
             );
         }
 
-        // 3) Load all challenges once
+        // 3) Load all challenges
         const { data: allChallenges, error: challengesError } = await supabaseAdmin
             .from('daily_challenges')
             .select('*');
@@ -202,7 +270,7 @@ app.get('/make-server-93cd01be/daily-challenge/:userId', async (c) => {
             return c.json({ error: 'No challenges available' }, 404);
         }
 
-        // Filter by weakest skills (case-insensitive) if we have them
+        // 4) Filter by weakest skill(s) if we have them
         let pool = allChallenges;
         if (weakestSkills.length > 0) {
             const normalizedWeak = weakestSkills.map((s) =>
@@ -227,9 +295,11 @@ app.get('/make-server-93cd01be/daily-challenge/:userId', async (c) => {
             pool = allChallenges;
         }
 
+        // 5) Pick one at random
         const selected = pool[Math.floor(Math.random() * pool.length)];
         console.log('✅ Selected challenge skill:', selected.skill);
 
+        // 6) Store today's challenge
         await supabaseAdmin.from('user_challenges').insert({
             user_id: userId,
             date: today,
@@ -250,6 +320,8 @@ app.get('/make-server-93cd01be/daily-challenge/:userId', async (c) => {
     }
 });
 
+// ─────────────────────── skip challenge ───────────────────────
+
 app.post('/make-server-93cd01be/skip-challenge', async (c) => {
     try {
         const { userId } = await c.req.json();
@@ -267,19 +339,24 @@ app.post('/make-server-93cd01be/skip-challenge', async (c) => {
         const skipsUsed = record.skips_used ?? 0;
         if (skipsUsed >= 2) return c.json({ error: 'No skips remaining.' }, 400);
 
-        // 1) Load latest assessment to get weakest skills
+        // Load weakest skills again
         let weakestSkills: string[] = [];
         try {
-            const { data: assessment } = await supabaseAdmin
+            const { data: assessment, error: assessmentErr } = await supabaseAdmin
                 .from('user_assessments')
-                .select('results')
+                .select('scores, weakest_skill')
                 .eq('user_id', userId)
                 .order('created_at', { ascending: false })
                 .limit(1)
                 .maybeSingle();
 
-            if (assessment?.results) {
-                weakestSkills = getWeakestSkills(assessment.results as any[]);
+            if (assessmentErr) {
+                console.warn(
+                    '⚠️ Error loading assessment for skip-challenge:',
+                    assessmentErr
+                );
+            } else {
+                weakestSkills = extractWeakestSkills(assessment);
             }
         } catch (e) {
             console.warn(
@@ -288,7 +365,6 @@ app.post('/make-server-93cd01be/skip-challenge', async (c) => {
             );
         }
 
-        // 2) Load all challenges
         const { data: allChallenges, error: challengesError } = await supabaseAdmin
             .from('daily_challenges')
             .select('*');
@@ -298,7 +374,6 @@ app.post('/make-server-93cd01be/skip-challenge', async (c) => {
             return c.json({ error: 'Failed to skip challenge' }, 500);
         }
 
-        // 3) Filter by weakest skills if we have them
         let pool = allChallenges;
         if (weakestSkills.length > 0) {
             const normalizedWeak = weakestSkills.map((s) =>
@@ -310,12 +385,11 @@ app.post('/make-server-93cd01be/skip-challenge', async (c) => {
             });
         }
 
-        // 4) Try not to give the exact same challenge again
+        // Don't pick the same challenge again if possible
         if (record.challenge?.id) {
             pool = pool.filter((ch: any) => ch.id !== record.challenge.id);
         }
 
-        // If filtering emptied the pool, fall back to all except current
         if (pool.length === 0) {
             pool = allChallenges.filter((ch: any) => ch.id !== record.challenge?.id);
         }
@@ -350,20 +424,16 @@ app.post('/make-server-93cd01be/skip-challenge', async (c) => {
     }
 });
 
-/* ------------------------------------------------------------------ */
-/* ✅ Complete challenge – robust version                             */
-/* ------------------------------------------------------------------ */
+// ─────────────────────── complete challenge ───────────────────────
+
 app.post('/make-server-93cd01be/complete-challenge', async (c) => {
     try {
         const { userId, challengeId, points } = await c.req.json();
-
-        // always treat points as a number, default 10
         const awardedPoints =
             typeof points === 'number' && !Number.isNaN(points) ? points : 10;
 
         const todayStr = new Date().toISOString().slice(0, 10); // "YYYY-MM-DD"
 
-        // 1) Mark today's challenge complete
         const { error: updateErr } = await supabaseAdmin
             .from('user_challenges')
             .update({ completed: true })
@@ -375,14 +445,13 @@ app.post('/make-server-93cd01be/complete-challenge', async (c) => {
             return c.json({ error: 'Failed to complete challenge' }, 500);
         }
 
-        // 2) Try to fetch existing progress (latest row if multiple)
         let progressRecord: any = null;
         try {
             const { data, error: progressErr } = await supabaseAdmin
                 .from('user_progress')
                 .select('*')
                 .eq('user_id', userId)
-                .order('updated_at', { ascending: false })
+                .order('created_at', { ascending: false })
                 .limit(1)
                 .maybeSingle();
 
@@ -401,7 +470,6 @@ app.post('/make-server-93cd01be/complete-challenge', async (c) => {
             );
         }
 
-        // 3) Compute progress numbers
         let currentStreak = 1;
         let longestStreak = 1;
         let totalPoints = awardedPoints;
@@ -421,39 +489,34 @@ app.post('/make-server-93cd01be/complete-challenge', async (c) => {
         const level = Math.floor(totalPoints / POINTS_PER_LEVEL) + 1;
         const pointsToNextLevel = level * POINTS_PER_LEVEL - totalPoints;
 
-        // 4) Upsert progress WITHOUT onConflict (simpler / safer)
         try {
-            const { error: upsertErr } = await supabaseAdmin.from('user_progress').upsert({
-                user_id: userId,
-                current_streak: currentStreak,
-                longest_streak: longestStreak,
-                total_points: totalPoints,
-                challenges_completed: challengesCompleted,
-                level,
-                points_to_next_level: pointsToNextLevel,
-                updated_at: new Date().toISOString(),
-            });
+            const { error: upsertErr } = await supabaseAdmin
+                .from('user_progress')
+                .upsert({
+                    user_id: userId,
+                    current_streak: currentStreak,
+                    longest_streak: longestStreak,
+                    total_points: totalPoints,
+                    challenges_completed: challengesCompleted,
+                    level,
+                    points_to_next_level: pointsToNextLevel,
+                    updated_at: new Date().toISOString(),
+                });
 
             if (upsertErr) {
-                console.error(
-                    'Error upserting user_progress (non-fatal):',
-                    upsertErr
-                );
-                // we DO NOT return 500 here anymore
+                console.error('Error upserting user_progress (non-fatal):', upsertErr);
             }
         } catch (err) {
             console.error(
                 'Unexpected error upserting user_progress (non-fatal):',
                 err
             );
-            // still no 500
         }
 
         console.log(
             `✅ Challenge ${challengeId} completed by ${userId}, +${awardedPoints} pts, total=${totalPoints}, streak=${currentStreak}, lvl=${level}`
         );
 
-        // 5) Always return success as long as marking the challenge complete worked
         return c.json({
             success: true,
             currentStreak,
@@ -469,14 +532,11 @@ app.post('/make-server-93cd01be/complete-challenge', async (c) => {
     }
 });
 
-/* ------------------------------------------------------------------ */
-/* ✅ Get user progress – computed from user_challenges                */
-/* ------------------------------------------------------------------ */
+// ─────────────────────── user progress ───────────────────────
+
 app.get('/make-server-93cd01be/progress/:userId', async (c) => {
     try {
         const userId = c.req.param('userId');
-
-        // 1) Pull all completed challenges for this user
         const { data: userChallenges, error: challengesErr } = await supabaseAdmin
             .from('user_challenges')
             .select('date, completed, challenge')
@@ -510,9 +570,6 @@ app.get('/make-server-93cd01be/progress/:userId', async (c) => {
             });
         }
 
-        // --------------------------------------------------------------
-        // 2) Compute totals from challenge JSON
-        // --------------------------------------------------------------
         const completedDates: string[] = [];
         let totalPoints = 0;
 
@@ -527,17 +584,11 @@ app.get('/make-server-93cd01be/progress/:userId', async (c) => {
         }
 
         const challengesCompleted = completedDates.length;
-
-        // --------------------------------------------------------------
-        // 3) Compute current streak and longest streak
-        // --------------------------------------------------------------
         const dateSet = new Set(completedDates);
         const dateObjs = [...dateSet].map(
             (ds) => new Date(ds + 'T00:00:00Z')
         );
         dateObjs.sort((a, b) => a.getTime() - b.getTime());
-
-        // current streak – consecutive days ending today
         const todayStr = new Date().toISOString().slice(0, 10);
         let currentStreak = 0;
         let cursor = new Date(todayStr + 'T00:00:00Z');
@@ -547,7 +598,6 @@ app.get('/make-server-93cd01be/progress/:userId', async (c) => {
             cursor.setUTCDate(cursor.getUTCDate() - 1);
         }
 
-        // longest streak – max consecutive run in history
         let longestStreak = 0;
         if (dateObjs.length > 0) {
             let streak = 1;
@@ -570,16 +620,13 @@ app.get('/make-server-93cd01be/progress/:userId', async (c) => {
             if (streak > longestStreak) longestStreak = streak;
         }
 
-        // --------------------------------------------------------------
-        // 4) Weekly activity & monthly stats
-        // --------------------------------------------------------------
         const todayLocal = new Date();
         const todayLocalStr = todayLocal.toISOString().slice(0, 10);
         const [ty, tm, td] = todayLocalStr.split('-').map(Number);
         const today = new Date(Date.UTC(ty, tm - 1, td));
         const ONE_DAY = 1000 * 60 * 60 * 24;
 
-        // weeklyProgress: index 0 = Mon, ... 6 = Sun
+        // weeklyProgress
         const weeklyProgress = Array(7).fill(0);
         let challengesThisMonth = 0;
         let pointsThisMonth = 0;
@@ -613,10 +660,6 @@ app.get('/make-server-93cd01be/progress/:userId', async (c) => {
         }
 
         const monthName = today.toLocaleString('default', { month: 'long' });
-
-        // --------------------------------------------------------------
-        // 5) Level info (based purely on totalPoints)                    |
-        // --------------------------------------------------------------
         const POINTS_PER_LEVEL = 100;
         const level = Math.floor(totalPoints / POINTS_PER_LEVEL) + 1;
         const pointsToNextLevel = level * POINTS_PER_LEVEL - totalPoints;

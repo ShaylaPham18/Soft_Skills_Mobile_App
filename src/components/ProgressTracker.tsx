@@ -74,7 +74,7 @@ export function ProgressTracker({
                     pointsToNextLevel: result.pointsToNextLevel ?? 100,
                 });
             } else {
-                console.warn('⚠️ No progress found, initializing empty data.');
+                console.warn('No progress found, initializing empty data.');
                 setProgress({
                     currentStreak: 0,
                     longestStreak: 0,
@@ -87,7 +87,7 @@ export function ProgressTracker({
                 });
             }
         } catch (error) {
-            console.error('❌ Error loading progress:', error);
+            console.error('Error loading progress:', error);
             setProgress({
                 currentStreak: 0,
                 longestStreak: 0,
@@ -136,7 +136,7 @@ export function ProgressTracker({
     const levelProgress =
         ((levelBase - progress.pointsToNextLevel) / levelBase) * 100;
 
-    const weekDays = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+    const weekDays = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
     const currentMonth = new Date().toLocaleString('default', { month: 'long' });
     const currentMonthStats =
         progress.monthlyStats.find((stat) => stat.month === currentMonth) || {
