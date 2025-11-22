@@ -1,5 +1,5 @@
 
-  # Soft Skills Mobile App
+  # Leveling You Up!
 
   This is a code bundle for Soft Skills Mobile App. The original project is available at https://www.figma.com/design/wgovRPlN0NGZsOkvKI8wmG/Soft-Skills-Mobile-App.
 
